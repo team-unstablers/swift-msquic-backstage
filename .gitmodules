@@ -1,0 +1,3 @@
+[submodule "dependencies/msquic"]
+	path = dependencies/msquic
+	url = https://github.com/team-unstablers/msquic.git
