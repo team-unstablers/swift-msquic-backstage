@@ -1,3 +1,9 @@
 .DS_Store
+
 build/
+build_debug/
 dist/
+dist_debug/
+
+__pycache__
+
