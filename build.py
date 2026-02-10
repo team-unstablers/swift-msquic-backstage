@@ -50,6 +50,17 @@ def main():
     parser.add_argument("--configuration", default="Release", choices=["Debug", "Release"], help="Build configuration.")
     parser.add_argument("--platform", required=True, choices=["ios", "macos", "simulator"], help="Target platform.")
     parser.add_argument("--arch", required=True, help="Target architecture(s).")
+    parser.add_argument(
+        "--quic-logging",
+        default="auto",
+        choices=["auto", "on", "off"],
+        help="msquic logging mode. auto: enable for Debug, disable for Release.",
+    )
+    parser.add_argument(
+        "--quic-logging-type",
+        default="stdout",
+        help="Logging sink used when msquic logging is enabled.",
+    )
     parser.add_argument("--xcode-path", default="/Applications/Xcode.app", help="Xcode.app path.")
     parser.add_argument("--generator", default="Ninja", help="CMake generator.")
     parser.add_argument("--make-program", default="ninja", help="CMake make program.")
@@ -83,8 +94,6 @@ def main():
         "-B",
         build_dir,
         "-DQUIC_BUILD_SHARED=OFF",
-        # "-DQUIC_ENABLE_LOGGING=ON",
-        # "-DQUIC_LOGGING_TYPE=stdout",
         "-DQUIC_BUILD_TOOLS=OFF",
         "-DQUIC_BUILD_TEST=OFF",
         "-DQUIC_BUILD_PERF=OFF",
@@ -92,6 +101,16 @@ def main():
         f"-DCMAKE_BUILD_TYPE={args.configuration}",
     ]
 
+    if args.quic_logging == "on":
+        enable_quic_logging = True
+    elif args.quic_logging == "off":
+        enable_quic_logging = False
+    else:
+        enable_quic_logging = args.configuration == "Debug"
+
+    configure_args.append(f"-DQUIC_ENABLE_LOGGING={'ON' if enable_quic_logging else 'OFF'}")
+    if enable_quic_logging and args.quic_logging_type:
+        configure_args.append(f"-DQUIC_LOGGING_TYPE={args.quic_logging_type}")
 
     xcode_path = Path(args.xcode_path)
 
