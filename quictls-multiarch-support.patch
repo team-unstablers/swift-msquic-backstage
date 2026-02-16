@@ -1,0 +1,224 @@
+diff --git a/submodules/CMakeLists.txt b/submodules/CMakeLists.txt
+index 4913f8656..c8f7ade18 100644
+--- a/submodules/CMakeLists.txt
++++ b/submodules/CMakeLists.txt
+@@ -188,7 +188,11 @@ else()
+         list(APPEND OPENSSL_CONFIG_FLAGS --openssldir=/usr/local/ssl)
+     endif()
+ 
+-    list(APPEND OPENSSL_CONFIG_FLAGS --prefix=${OPENSSL_DIR})
++    set(OPENSSL_CONFIG_ENV "")
++    set(OPENSSL_MULTI_ARCH_DARWIN OFF)
++    set(OPENSSL_MULTI_ARCH_LIBSSL_OUTPUTS "")
++    set(OPENSSL_MULTI_ARCH_LIBCRYPTO_OUTPUTS "")
++    set(OPENSSL_MULTI_ARCH_HEADER_STAMP "")
+ 
+     if (QUIC_ENABLE_SANITIZERS)
+         list(APPEND OPENSSL_CONFIG_FLAGS enable-asan enable-ubsan)
+@@ -238,13 +242,22 @@ else()
+             endif()
+         endif()
+     elseif(CX_PLATFORM STREQUAL "darwin")
+-        if (CMAKE_OSX_ARCHITECTURES STREQUAL arm64)
+-            set(OPENSSL_CONFIG_CMD ARCHFLAGS="-arch arm64" ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/Configure darwin64-arm64-cc)
+-        elseif(CMAKE_OSX_ARCHITECTURES STREQUAL x86_64)
+-            set(OPENSSL_CONFIG_CMD ARCHFLAGS="-arch x86_64" ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/Configure darwin64-x86_64-cc)
++        string(REPLACE "," ";" OPENSSL_DARWIN_ARCHS "${CMAKE_OSX_ARCHITECTURES}")
++        list(LENGTH OPENSSL_DARWIN_ARCHS OPENSSL_DARWIN_ARCH_COUNT)
++
++        if (OPENSSL_DARWIN_ARCH_COUNT GREATER 1)
++            set(OPENSSL_MULTI_ARCH_DARWIN ON)
++            message(STATUS "Configuring OpenSSL multi-arch for darwin: ${OPENSSL_DARWIN_ARCHS}")
+         else()
+-            message(ERROR "WTF ${CX_PLATFORM} ${CMAKE_TARGET_ARCHITECTURE}")
+-            set(OPENSSL_CONFIG_CMD ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/config)
++            if (CMAKE_OSX_ARCHITECTURES STREQUAL arm64)
++                set(OPENSSL_CONFIG_ENV "ARCHFLAGS=-arch arm64")
++                set(OPENSSL_CONFIG_CMD ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/Configure darwin64-arm64-cc)
++            elseif(CMAKE_OSX_ARCHITECTURES STREQUAL x86_64)
++                set(OPENSSL_CONFIG_ENV "ARCHFLAGS=-arch x86_64")
++                set(OPENSSL_CONFIG_CMD ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/Configure darwin64-x86_64-cc)
++            else()
++                message(FATAL_ERROR "Unsupported darwin OpenSSL architecture list: ${CMAKE_OSX_ARCHITECTURES}")
++            endif()
+         endif()
+         
+         if(NOT CMAKE_OSX_SYSROOT)
+@@ -281,49 +294,149 @@ else()
+     file(MAKE_DIRECTORY ${OPENSSL_DIR}/include)
+     file(MAKE_DIRECTORY ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL})
+ 
+-    # Configure steps for debug and release variants
+-    add_custom_command(
+-        WORKING_DIRECTORY ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}
+-        OUTPUT ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}/Makefile
+-        COMMAND SYSTEM=${CMAKE_HOST_SYSTEM_NAME}
+-            ${OPENSSL_CONFIG_CMD} ${OPENSSL_CONFIG_FLAGS}
+-        COMMENT "OpenSSL configure"
+-    )
+-
+     include(ProcessorCount)
+     ProcessorCount(NPROCS)
+ 
+-    message(STATUS "Configuring OpenSSL: ${OPENSSL_CONFIG_CMD} ${OPENSSL_CONFIG_FLAGS}")
+-    # Compile/install commands for debug and release variants
+-    add_custom_command(
+-        OUTPUT ${LIBSSL_PATH}
+-        OUTPUT ${LIBCRYPTO_PATH}
+-        DEPENDS ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}/Makefile
+-        WORKING_DIRECTORY ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}
+-        COMMAND make install_dev -j${NPROCS}
+-        COMMENT "OpenSSL build"
+-    )
++    if (OPENSSL_MULTI_ARCH_DARWIN)
++        set(OPENSSL_PRIMARY_ARCH "")
++        set(OPENSSL_PRIMARY_ARCH_PREFIX "")
+ 
+-    if (QUIC_USE_SYSTEM_LIBCRYPTO)
+-        # OpenSSL 3 uses different sources for static and dynamic libraries.
+-        # That is ok if you use either one consistently but it fails to link when we use dynamic crypto with static ssl.
+-        # To fix that we need little hackery - see quictls/ssl/build.info
++        foreach(OPENSSL_ARCH IN LISTS OPENSSL_DARWIN_ARCHS)
++            if (OPENSSL_ARCH STREQUAL "arm64")
++                set(OPENSSL_ARCH_TARGET darwin64-arm64-cc)
++            elseif (OPENSSL_ARCH STREQUAL "x86_64")
++                set(OPENSSL_ARCH_TARGET darwin64-x86_64-cc)
++            else()
++                message(FATAL_ERROR "Unsupported darwin OpenSSL architecture: ${OPENSSL_ARCH}")
++            endif()
++
++            set(OPENSSL_ARCH_BUILD_DIR ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}-${OPENSSL_ARCH})
++            set(OPENSSL_ARCH_PREFIX ${OPENSSL_DIR}-${OPENSSL_ARCH})
++            set(OPENSSL_ARCH_MAKEFILE ${OPENSSL_ARCH_BUILD_DIR}/Makefile)
++            set(OPENSSL_ARCH_LIBSSL ${OPENSSL_ARCH_PREFIX}/lib/libssl${CMAKE_STATIC_LIBRARY_SUFFIX})
++            set(OPENSSL_ARCH_LIBCRYPTO ${OPENSSL_ARCH_PREFIX}/lib/libcrypto${CMAKE_STATIC_LIBRARY_SUFFIX})
++
++            if (OPENSSL_PRIMARY_ARCH STREQUAL "")
++                set(OPENSSL_PRIMARY_ARCH ${OPENSSL_ARCH})
++                set(OPENSSL_PRIMARY_ARCH_PREFIX ${OPENSSL_ARCH_PREFIX})
++            endif()
++
++            file(MAKE_DIRECTORY ${OPENSSL_ARCH_BUILD_DIR})
++
++            add_custom_command(
++                WORKING_DIRECTORY ${OPENSSL_ARCH_BUILD_DIR}
++                OUTPUT ${OPENSSL_ARCH_MAKEFILE}
++                COMMAND ${CMAKE_COMMAND} -E env
++                    SYSTEM=${CMAKE_HOST_SYSTEM_NAME}
++                    ARCHFLAGS=-arch\ ${OPENSSL_ARCH}
++                    ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/Configure
++                    ${OPENSSL_ARCH_TARGET}
++                    ${OPENSSL_CONFIG_FLAGS}
++                    --prefix=${OPENSSL_ARCH_PREFIX}
++                COMMENT "OpenSSL configure (${OPENSSL_ARCH})"
++            )
++
++            add_custom_command(
++                OUTPUT ${OPENSSL_ARCH_LIBSSL}
++                OUTPUT ${OPENSSL_ARCH_LIBCRYPTO}
++                DEPENDS ${OPENSSL_ARCH_MAKEFILE}
++                WORKING_DIRECTORY ${OPENSSL_ARCH_BUILD_DIR}
++                COMMAND make install_dev -j${NPROCS}
++                COMMENT "OpenSSL build (${OPENSSL_ARCH})"
++            )
++
++            if (QUIC_USE_SYSTEM_LIBCRYPTO)
++                # OpenSSL 3 uses different sources for static and dynamic libraries.
++                # That is ok if you use either one consistently but it fails to link when we use dynamic crypto with static ssl.
++                # To fix that we need little hackery - see quictls/ssl/build.info
++                add_custom_command(
++                    OUTPUT ${OPENSSL_ARCH_LIBSSL}
++                    OUTPUT ${OPENSSL_ARCH_LIBCRYPTO}
++                    APPEND
++                    WORKING_DIRECTORY ${OPENSSL_ARCH_BUILD_DIR}
++                    COMMAND ar x ${OPENSSL_ARCH_LIBCRYPTO} libcrypto-lib-packet.o libcommon-lib-tls_pad.o
++                    COMMAND ar r ${OPENSSL_ARCH_LIBSSL} libcrypto-lib-packet.o libcommon-lib-tls_pad.o
++                )
++            endif()
++
++            list(APPEND OPENSSL_MULTI_ARCH_LIBSSL_OUTPUTS ${OPENSSL_ARCH_LIBSSL})
++            list(APPEND OPENSSL_MULTI_ARCH_LIBCRYPTO_OUTPUTS ${OPENSSL_ARCH_LIBCRYPTO})
++        endforeach()
++
++        set(OPENSSL_MULTI_ARCH_HEADER_STAMP ${OPENSSL_DIR}/include/openssl/ssl.h)
++        add_custom_command(
++            OUTPUT ${OPENSSL_MULTI_ARCH_HEADER_STAMP}
++            DEPENDS ${OPENSSL_MULTI_ARCH_LIBSSL_OUTPUTS}
++            COMMAND ${CMAKE_COMMAND} -E make_directory ${OPENSSL_DIR}/include
++            COMMAND ${CMAKE_COMMAND} -E copy_directory ${OPENSSL_PRIMARY_ARCH_PREFIX}/include ${OPENSSL_DIR}/include
++            COMMENT "OpenSSL headers (${OPENSSL_PRIMARY_ARCH})"
++        )
++
++        add_custom_command(
++            OUTPUT ${LIBSSL_PATH}
++            DEPENDS ${OPENSSL_MULTI_ARCH_LIBSSL_OUTPUTS}
++            COMMAND ${CMAKE_COMMAND} -E make_directory ${OPENSSL_DIR}/lib
++            COMMAND lipo -create -output ${LIBSSL_PATH} ${OPENSSL_MULTI_ARCH_LIBSSL_OUTPUTS}
++            COMMENT "OpenSSL lipo libssl"
++        )
++
++        add_custom_command(
++            OUTPUT ${LIBCRYPTO_PATH}
++            DEPENDS ${OPENSSL_MULTI_ARCH_LIBCRYPTO_OUTPUTS}
++            COMMAND ${CMAKE_COMMAND} -E make_directory ${OPENSSL_DIR}/lib
++            COMMAND lipo -create -output ${LIBCRYPTO_PATH} ${OPENSSL_MULTI_ARCH_LIBCRYPTO_OUTPUTS}
++            COMMENT "OpenSSL lipo libcrypto"
++        )
++    else()
++        list(APPEND OPENSSL_CONFIG_FLAGS --prefix=${OPENSSL_DIR})
++
++        # Configure steps for debug and release variants
++        add_custom_command(
++            WORKING_DIRECTORY ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}
++            OUTPUT ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}/Makefile
++            COMMAND ${CMAKE_COMMAND} -E env
++                SYSTEM=${CMAKE_HOST_SYSTEM_NAME}
++                ${OPENSSL_CONFIG_ENV}
++                ${OPENSSL_CONFIG_CMD} ${OPENSSL_CONFIG_FLAGS}
++            COMMENT "OpenSSL configure"
++        )
++
++        message(STATUS "Configuring OpenSSL: ${OPENSSL_CONFIG_CMD} ${OPENSSL_CONFIG_FLAGS}")
++        # Compile/install commands for debug and release variants
+         add_custom_command(
+             OUTPUT ${LIBSSL_PATH}
+             OUTPUT ${LIBCRYPTO_PATH}
+-            APPEND
++            DEPENDS ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}/Makefile
+             WORKING_DIRECTORY ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}
+-            COMMAND ar x ${LIBCRYPTO_PATH} libcrypto-lib-packet.o libcommon-lib-tls_pad.o
+-            COMMAND ar r ${LIBSSL_PATH} libcrypto-lib-packet.o libcommon-lib-tls_pad.o
++            COMMAND make install_dev -j${NPROCS}
++            COMMENT "OpenSSL build"
+         )
++
++        if (QUIC_USE_SYSTEM_LIBCRYPTO)
++            # OpenSSL 3 uses different sources for static and dynamic libraries.
++            # That is ok if you use either one consistently but it fails to link when we use dynamic crypto with static ssl.
++            # To fix that we need little hackery - see quictls/ssl/build.info
++            add_custom_command(
++                OUTPUT ${LIBSSL_PATH}
++                OUTPUT ${LIBCRYPTO_PATH}
++                APPEND
++                WORKING_DIRECTORY ${QUIC_BUILD_DIR}/submodules/${QUIC_OPENSSL}
++                COMMAND ar x ${LIBCRYPTO_PATH} libcrypto-lib-packet.o libcommon-lib-tls_pad.o
++                COMMAND ar r ${LIBSSL_PATH} libcrypto-lib-packet.o libcommon-lib-tls_pad.o
++            )
++        endif()
++    endif()
++
++    set(OPENSSL_TARGET_DEPENDS ${LIBSSL_PATH} ${LIBCRYPTO_PATH})
++    if (OPENSSL_MULTI_ARCH_HEADER_STAMP)
++        list(APPEND OPENSSL_TARGET_DEPENDS ${OPENSSL_MULTI_ARCH_HEADER_STAMP})
+     endif()
+ 
+     # Named target depending on the final lib artifacts produced by custom commands
+     add_custom_target(
+         OpenSSL_Target
+         DEPENDS
+-        ${LIBSSL_PATH}
+-        ${LIBCRYPTO_PATH}
++        ${OPENSSL_TARGET_DEPENDS}
+     )
+     set_property(TARGET OpenSSL_Target PROPERTY FOLDER "${QUIC_FOLDER_PREFIX}helpers")
+ 

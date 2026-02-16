@@ -24,6 +24,7 @@ cd ./dependencies/msquic
 git reset --hard
 
 patch -p1 < ../../msquic-cmake-cpu-platform.patch
+patch -p1 < ../../quictls-multiarch-support.patch
 
 cd ../../
 
