@@ -138,12 +138,13 @@ def main():
                 "-DCMAKE_SYSTEM_NAME=iOS",
                 "-DSDK_NAME=iphoneos",
                 "-DDEPLOYMENT_TARGET=14.0",
+                "-DQUIC_DARWIN_USE_PRIVATE_MSGX_API=OFF",
                 f"-DCMAKE_OSX_SYSROOT={sdk_path}",
                 f"-DCMAKE_OSX_ARCHITECTURES={arch_list}",
             ]
         )
     elif args.platform == "simulator":
-        platform_path = xcode_path / "Contents/Developer/Platforms/iPhoneSimulator.platform" 
+        platform_path = xcode_path / "Contents/Developer/Platforms/iPhoneSimulator.platform"
         sdk_path = platform_path / "Developer/SDKs/iPhoneSimulator.sdk"
 
         configure_args.extend(
@@ -151,6 +152,7 @@ def main():
                 "-DCMAKE_SYSTEM_NAME=iOS",
                 "-DSDK_NAME=iphonesimulator",
                 "-DDEPLOYMENT_TARGET=14.0",
+                "-DQUIC_DARWIN_USE_PRIVATE_MSGX_API=OFF",
                 f"-DCMAKE_OSX_SYSROOT={sdk_path}",
                 f"-DCMAKE_OSX_ARCHITECTURES={arch_list}",
             ]
@@ -160,6 +162,7 @@ def main():
             [
                 "-DSDK_NAME=macosx",
                 "-DDEPLOYMENT_TARGET=11.0",
+                "-DQUIC_DARWIN_USE_PRIVATE_MSGX_API=ON",
                 f"-DCMAKE_OSX_ARCHITECTURES={arch_list}",
             ]
         )
